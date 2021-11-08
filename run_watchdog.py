@@ -27,22 +27,31 @@ import usb.util
 
 import time
 
+import argparse
+
 # settings 
-VID = 0x5131
-PID = 0x2007
-WATCHDOG_TIMEOUT = 360 # sec
+DEFAULT_VID = 0x5131
+DEFAULT_PID = 0x2007
+DEFAULT_REBOOT_TIMEOUT = 360 # sec
+DEFAULT_WATCHDOG_RESET_TIMEOUT = 5 # sec
 #
 
 # commands
 BUFFER_SIZE = 0x40
 COMMAND_TEST_INVALID_RESPONCE = b'\xff' * BUFFER_SIZE
 
-COMMAND_WATCHDOG_RESET_REQUEST = \
-        (0x0C + WATCHDOG_TIMEOUT // 10).to_bytes(1, byteorder='big') + b'\x00' * (BUFFER_SIZE - 1)
+COMMAND_WATCHDOG_RESET_REQUEST = b'\x00' * BUFFER_SIZE
 COMMAND_WATCHDOG_RESET_RESPONSE = COMMAND_WATCHDOG_RESET_REQUEST
 
-COMMAND_RESET_REQUEST = b'\xff\x55' + b'\x00' * (BUFFER_SIZE - 2)
-COMMAND_RESET_RESPONSE = COMMAND_RESET_REQUEST #COMMAND_TEST_INVALID_RESPONCE
+def redefine_commands(reboot_timeout):
+    global COMMAND_WATCHDOG_RESET_REQUEST
+    COMMAND_WATCHDOG_RESET_REQUEST = \
+            (0x0C + reboot_timeout // 10).to_bytes(1, byteorder='big') + b'\x00' * (BUFFER_SIZE - 1)
+    global COMMAND_WATCHDOG_RESET_RESPONSE
+    COMMAND_WATCHDOG_RESET_RESPONSE = COMMAND_WATCHDOG_RESET_REQUEST
+
+COMMAND_REBOOT_REQUEST = b'\xff\x55' + b'\x00' * (BUFFER_SIZE - 2)
+COMMAND_REBOOT_RESPONSE = COMMAND_REBOOT_REQUEST #COMMAND_TEST_INVALID_RESPONCE
 
 COMMAND_INIT_REQUEST = b'\x80' + b'\x00' * (BUFFER_SIZE - 1)
 COMMAND_INIT_RESPONSE = b'\x81' + b'\x00' * (BUFFER_SIZE - 1)
@@ -51,7 +60,7 @@ COMMAND_INIT_RESPONSE = b'\x81' + b'\x00' * (BUFFER_SIZE - 1)
 RESULT_OK = True
 RESULT_FAIL = False
 
-def send_command(device, input_endpoint, output_endpoint, command_request, valid_responce):
+def send_command(device, input_endpoint, output_endpoint, command_request, valid_responce) -> bool:
 
     input_endpoint.write(command_request)
     buffer = device.read(output_endpoint.bEndpointAddress, BUFFER_SIZE)
@@ -64,6 +73,32 @@ def send_command(device, input_endpoint, output_endpoint, command_request, valid
     return RESULT_OK
 
 def main():
+
+    # arguments work
+
+    parser = argparse.ArgumentParser(prog='Watchdog TRS444', description='Client software for Watchdog TRS444.')
+    parser.add_argument('--vid', type=ascii, default=hex(DEFAULT_VID), help='device VID (default ' + hex(DEFAULT_VID) + ')')
+    parser.add_argument('--pid', type=ascii, default=hex(DEFAULT_PID), help='device PID (default ' + hex(DEFAULT_PID) + ')')
+    parser.add_argument('--reset-watchdog-timeout', type=int, default=DEFAULT_WATCHDOG_RESET_TIMEOUT, 
+            help='watchdog reset timeout (default ' + str(DEFAULT_WATCHDOG_RESET_TIMEOUT) + ')')
+    parser.add_argument('--reboot-timeout', type=int, default=DEFAULT_REBOOT_TIMEOUT, 
+            help='timeout before reboot (if watchdog down) (default ' + str(DEFAULT_REBOOT_TIMEOUT) + ')')
+
+    parser.add_argument('command', nargs='?', help='reset watchdog with timeout (wait - default, reboot)')
+
+    args = parser.parse_args()
+    
+    VID = int(args.vid.replace("'", ""), 16)
+    PID = int(args.pid.replace("'", ""), 16)
+
+    REBOOT_TIMEOUT = args.reboot_timeout
+    redefine_commands(REBOOT_TIMEOUT)
+
+    WATCHDOG_RESET_TIMEOUT = args.reset_watchdog_timeout
+
+    need_reboot = args.command == 'reboot'
+
+    # find device
 
     device = usb.core.find(idVendor=VID, idProduct=PID)
     if device is None:
@@ -100,18 +135,20 @@ def main():
             else:
                 print('Command COMMAND_INIT_REQUEST - OK')
 
-        # elif step % 60 == 59:
+        elif need_reboot:
 
-        #     result = send_command(
-        #         device, input_endpoint, output_endpoint, 
-        #         COMMAND_RESET_REQUEST, COMMAND_RESET_RESPONSE)
+            result = send_command(
+                device, input_endpoint, output_endpoint, 
+                COMMAND_REBOOT_REQUEST, COMMAND_REBOOT_RESPONSE)
 
-        #     if result != RESULT_OK:
-        #         print('Error COMMAND_RESET_REQUEST')
-        #     else:
-        #         print('Command COMMAND_RESET_REQUEST - OK')
+            if result != RESULT_OK:
+                print('Error COMMAND_REBOOT_REQUEST')
+            else:
+                print('Command COMMAND_REBOOT_REQUEST - OK')
 
-        elif step % 5 == 4:
+            return 0
+
+        elif step % WATCHDOG_RESET_TIMEOUT == (WATCHDOG_RESET_TIMEOUT - 1):
 
             result = send_command(
                 device, input_endpoint, output_endpoint, 
