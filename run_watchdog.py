@@ -26,10 +26,12 @@ import usb.core
 import usb.util
 
 import platform
+import sys
 
 import time
 
 import argparse
+import logging
 
 # settings 
 DEFAULT_VID = 0x5131
@@ -86,8 +88,13 @@ def main():
     parser.add_argument('--reboot-timeout', type=int, default=DEFAULT_REBOOT_TIMEOUT, 
             help='timeout before reboot (if watchdog down) (default ' + str(DEFAULT_REBOOT_TIMEOUT) + ')')
 
-    parser.add_argument('command', nargs='?', help='reset watchdog with timeout (wait - default, reboot)')
+    parser.add_argument('command', nargs='?', default='wait', help='reset watchdog with timeout (wait - default, reboot)')
 
+    parser.add_argument("--log-level", default=logging.INFO,  dest="log_level", type=lambda x: getattr(logging, x),
+            help="Configure the logging level (default INFO)")
+
+    parser.add_argument("--log-file", const="watchdog.log", default=None, dest="log_file", nargs="?")
+        
     args = parser.parse_args()
     
     VID = int(args.vid.replace("'", ""), 16)
@@ -100,14 +107,36 @@ def main():
 
     need_reboot = args.command == 'reboot'
 
+    # logging
+
+    log_formatter = logging.Formatter('[%(asctime)s][%(levelname)s] %(message)s')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(args.log_level)
+
+    if args.log_file != None:
+        log_file_handler = logging.FileHandler(args.log_file, mode='a')
+        log_file_handler.setFormatter(log_formatter)
+        root_logger.addHandler(log_file_handler)
+
+    log_console_handler = logging.StreamHandler(sys.stdout)
+    log_console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(log_console_handler)
+
     # find device
+
+    logging.info('Start')
+
+    logging.debug('arguments: ' + str(args))
 
     device = usb.core.find(idVendor=VID, idProduct=PID)
     if (platform.system() == 'Linux') and device.is_kernel_driver_active(0):
+        logging.debug('device.detach_kernel_driver(0)')
         device.detach_kernel_driver(0)
 
     if device is None:
         raise ValueError('Device not found')
+
+    logging.debug('device: ' + str(device))
 
     cfg = device.get_active_configuration()
 
@@ -136,9 +165,9 @@ def main():
                 COMMAND_INIT_REQUEST, COMMAND_INIT_RESPONSE)
 
             if result != RESULT_OK:
-                print('Error COMMAND_INIT_REQUEST')
+                logging.error('Error COMMAND_INIT_REQUEST')
             else:
-                print('Command COMMAND_INIT_REQUEST - OK')
+                logging.info('Command COMMAND_INIT_REQUEST - OK')
 
         elif need_reboot:
 
@@ -147,10 +176,11 @@ def main():
                 COMMAND_REBOOT_REQUEST, COMMAND_REBOOT_RESPONSE)
 
             if result != RESULT_OK:
-                print('Error COMMAND_REBOOT_REQUEST')
+                logging.error('Error COMMAND_REBOOT_REQUEST')
             else:
-                print('Command COMMAND_REBOOT_REQUEST - OK')
+                logging.info('Command COMMAND_REBOOT_REQUEST - OK')
 
+            logging.info('Stop')
             return 0
 
         elif step % WATCHDOG_RESET_TIMEOUT == (WATCHDOG_RESET_TIMEOUT - 1):
@@ -160,12 +190,13 @@ def main():
                 COMMAND_WATCHDOG_RESET_REQUEST, COMMAND_WATCHDOG_RESET_RESPONSE)
 
             if result != RESULT_OK:
-                print('Error COMMAND_WATCHDOG_RESET_REQUEST')
+                logging.error('Error COMMAND_WATCHDOG_RESET_REQUEST')
             else:
-                print('Command COMMAND_WATCHDOG_RESET_REQUEST - OK')
+                logging.info('Command COMMAND_WATCHDOG_RESET_REQUEST - OK')
 
         step += 1
 
+    logging.error('Error stop')
     return 1
 
 if __name__ == '__main__':
