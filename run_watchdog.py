@@ -25,6 +25,8 @@
 import usb.core
 import usb.util
 
+import platform
+
 import time
 
 import argparse
@@ -32,7 +34,7 @@ import argparse
 # settings 
 DEFAULT_VID = 0x5131
 DEFAULT_PID = 0x2007
-DEFAULT_REBOOT_TIMEOUT = 360 # sec
+DEFAULT_REBOOT_TIMEOUT = 360*2 # sec
 DEFAULT_WATCHDOG_RESET_TIMEOUT = 5 # sec
 #
 
@@ -101,6 +103,9 @@ def main():
     # find device
 
     device = usb.core.find(idVendor=VID, idProduct=PID)
+    if (platform.system() == 'Linux') and device.is_kernel_driver_active(0):
+        device.detach_kernel_driver(0)
+
     if device is None:
         raise ValueError('Device not found')
 
